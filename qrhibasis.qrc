@@ -1,0 +1,8 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource>
+    <file>texture.vert.qsb</file>
+    <file>texture.frag.qsb</file>
+    <file>honey.png</file>
+    <file>honey.basis</file>
+</qresource>
+</RCC>

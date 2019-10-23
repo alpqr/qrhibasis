@@ -53,12 +53,8 @@
 
 #include "transcoder/basisu_transcoder.h"
 
-// The example transcodes to BC1 by default. Set this to 1 to transcode to ETC2
-// instead.
-#define USE_ETC2 0
-
 // Set this to 1 to use a plain QImage loaded from a .png and skip all
-// compressed texture stuff.
+// the basis stuff.
 #define USE_QIMAGE 0
 
 struct {
@@ -131,15 +127,21 @@ void Window::customInit()
     if (!transcoder.get_image_info(bdata.constData(), bdata.size(), info, 0))
         qFatal("Failed to get .basis image info for image 0");
 
-#if USE_ETC2
-    qDebug("Transcoding to ETC2_RGBA8");
-    texFormat = QRhiTexture::ETC2_RGBA8;
-    basist::transcoder_texture_format outFormat = basist::transcoder_texture_format::cTFETC2_RGBA;
-#else
-    qDebug("Transcoding to BC1");
-    texFormat = QRhiTexture::BC1;
-    basist::transcoder_texture_format outFormat = basist::transcoder_texture_format::cTFBC1;
-#endif
+    basist::transcoder_texture_format outFormat;
+    if (m_r->isTextureFormatSupported(QRhiTexture::ETC2_RGBA8)) {
+        qDebug("Transcoding to ETC2_RGBA8");
+        texFormat = QRhiTexture::ETC2_RGBA8;
+        outFormat = basist::transcoder_texture_format::cTFETC2_RGBA;
+    } else if (m_r->isTextureFormatSupported(QRhiTexture::BC1)) {
+        qDebug("Transcoding to BC1");
+        texFormat = QRhiTexture::BC1;
+        outFormat = basist::transcoder_texture_format::cTFBC1;
+    } else {
+        qDebug("No ETC2/BC1 support. Transcoding to plain RGBA8");
+        texFormat = QRhiTexture::RGBA8;
+        outFormat = basist::transcoder_texture_format::cTFRGBA32;
+    }
+
     texSize = QSize(info.m_width, info.m_height);
     qDebug("Base size is %dx%d", texSize.width(), texSize.height());
 
@@ -154,8 +156,13 @@ void Window::customInit()
         if (!transcoder.get_image_level_desc(bdata.constData(), bdata.size(), 0, level, w, h, blocks))
             qFatal("Failed to get level %u description", level);
         qDebug("level %u: %ux%u %u blocks", level, w, h, blocks);
-        const uint32_t bytesPerBlock = basist::basis_get_bytes_per_block(outFormat);
-        outMips[level].resize(blocks * bytesPerBlock);
+        if (outFormat == basist::transcoder_texture_format::cTFRGBA32) {
+            outMips[level].resize(w * h * 4);
+            blocks = w * h;
+        } else {
+            const uint32_t bytesPerBlock = basist::basis_get_bytes_per_block(outFormat);
+            outMips[level].resize(blocks * bytesPerBlock);
+        }
         if (!transcoder.transcode_image_level(bdata.constData(), bdata.size(), 0, level, outMips[level].data(), blocks, outFormat))
             qFatal("Failed to transcode image level %u", level);
     }
@@ -211,10 +218,8 @@ void Window::customInit()
     if (outMips.count() != mipCount)
         qFatal("Mip level count mismatch (%d vs %d), this should not happen.", outMips.count(), mipCount);
     QVarLengthArray<QRhiTextureUploadEntry, 16> descEntries;
-    for (int i = 0; i < outMips.count(); ++i) {
-        QRhiTextureSubresourceUploadDescription image(outMips[i].constData(), outMips[i].size());
-        descEntries.append({ 0, i, image });
-    }
+    for (int i = 0; i < outMips.count(); ++i)
+        descEntries.append({ 0, i, QRhiTextureSubresourceUploadDescription(outMips[i].constData(), outMips[i].size()) });
     QRhiTextureUploadDescription desc;
     desc.setEntries(descEntries.cbegin(), descEntries.cend());
     d.initialUpdates->uploadTexture(d.tex, desc);

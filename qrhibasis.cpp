@@ -123,8 +123,8 @@ void Window::customInit()
     if (!transcoder.validate_header(bdata.constData(), bdata.size()))
         qFatal(".basis header validation failed");
 
-    basist::basisu_image_info info;
-    if (!transcoder.get_image_info(bdata.constData(), bdata.size(), info, 0))
+    basist::basisu_image_info imageInfo;
+    if (!transcoder.get_image_info(bdata.constData(), bdata.size(), imageInfo, 0))
         qFatal("Failed to get .basis image info for image 0");
 
     basist::transcoder_texture_format outFormat;
@@ -132,39 +132,49 @@ void Window::customInit()
         qDebug("Transcoding to ETC2_RGBA8");
         texFormat = QRhiTexture::ETC2_RGBA8;
         outFormat = basist::transcoder_texture_format::cTFETC2_RGBA;
+        texSize = QSize(imageInfo.m_width, imageInfo.m_height);
     } else if (m_r->isTextureFormatSupported(QRhiTexture::BC1)) {
         qDebug("Transcoding to BC1");
         texFormat = QRhiTexture::BC1;
         outFormat = basist::transcoder_texture_format::cTFBC1;
+        texSize = QSize(imageInfo.m_width, imageInfo.m_height);
     } else {
         qDebug("No ETC2/BC1 support. Transcoding to plain RGBA8");
         texFormat = QRhiTexture::RGBA8;
         outFormat = basist::transcoder_texture_format::cTFRGBA32;
+        texSize = QSize(imageInfo.m_orig_width, imageInfo.m_orig_height);
     }
 
-    texSize = QSize(info.m_width, info.m_height);
-    qDebug("Base size is %dx%d", texSize.width(), texSize.height());
+    qDebug("Texture size is %dx%d, original size is %ux%u",
+           texSize.width(), texSize.height(), imageInfo.m_orig_width, imageInfo.m_orig_height);
 
     transcoder.start_transcoding(bdata.constData(), bdata.size());
 
-    qDebug("%u mip levels", info.m_total_levels);
+    qDebug("%u mip levels", imageInfo.m_total_levels);
     QVector<QByteArray> outMips;
-    outMips.resize(info.m_total_levels);
+    outMips.resize(imageInfo.m_total_levels);
 
-    for (uint32_t level = 0; level < info.m_total_levels; ++level) {
-        uint32_t w, h, blocks;
-        if (!transcoder.get_image_level_desc(bdata.constData(), bdata.size(), 0, level, w, h, blocks))
-            qFatal("Failed to get level %u description", level);
-        qDebug("level %u: %ux%u %u blocks", level, w, h, blocks);
+    for (uint32_t level = 0; level < imageInfo.m_total_levels; ++level) {
+        basist::basisu_image_level_info levelInfo;
+        if (!transcoder.get_image_level_info(bdata.constData(), bdata.size(), levelInfo, 0, level))
+            qFatal("Failed to get level %u info", level);
+
+        qDebug("level %u: %ux%u (orig. %ux%u) %u blocks", level, levelInfo.m_width, levelInfo.m_height,
+               levelInfo.m_orig_width, levelInfo.m_orig_height, levelInfo.m_total_blocks);
+        uint32_t blocks;
         if (outFormat == basist::transcoder_texture_format::cTFRGBA32) {
-            outMips[level].resize(w * h * 4);
-            blocks = w * h;
+            blocks = levelInfo.m_orig_width * levelInfo.m_orig_height;
+            outMips[level].resize(blocks * 4);
         } else {
+            blocks = levelInfo.m_total_blocks;
             const uint32_t bytesPerBlock = basist::basis_get_bytes_per_block(outFormat);
             outMips[level].resize(blocks * bytesPerBlock);
         }
-        if (!transcoder.transcode_image_level(bdata.constData(), bdata.size(), 0, level, outMips[level].data(), blocks, outFormat))
+        if (!transcoder.transcode_image_level(bdata.constData(), bdata.size(), 0, level,
+                                              outMips[level].data(), blocks, outFormat))
+        {
             qFatal("Failed to transcode image level %u", level);
+        }
     }
 #endif
 

@@ -48,6 +48,24 @@
 **
 ****************************************************************************/
 
+#ifdef _MSC_VER
+#if defined(_DEBUG) || defined(DEBUG)
+#ifndef _ITERATOR_DEBUG_LEVEL
+#define _ITERATOR_DEBUG_LEVEL 1
+#endif
+#ifndef _SECURE_SCL
+#define _SECURE_SCL 1
+#endif
+#else // defined(_DEBUG) || defined(DEBUG)
+#ifndef _SECURE_SCL
+#define _SECURE_SCL 0
+#endif
+#ifndef _ITERATOR_DEBUG_LEVEL
+#define _ITERATOR_DEBUG_LEVEL 0
+#endif
+#endif // defined(_DEBUG) || defined(DEBUG)
+#endif // _MSC_VER
+
 #define EXAMPLEFW_PREINIT
 #include "examplefw.h"
 

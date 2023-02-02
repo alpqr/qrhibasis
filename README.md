@@ -10,6 +10,3 @@ It then draws a textured quad.
 
 Should work on all QRhi backends, switch with command line args: -d (D3D11) -v
 (Vulkan) -m (Metal) -g (OpenGL).
-
-Should build against qtbase/5.14. Uses private APIs though so it may break in
-arbitrary ways. Only tested with MSVC2019 so far.

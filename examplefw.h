@@ -1,52 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2018 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the examples of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:BSD$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** BSD License Usage
-** Alternatively, you may use this file under the terms of the BSD license
-** as follows:
-**
-** "Redistribution and use in source and binary forms, with or without
-** modification, are permitted provided that the following conditions are
-** met:
-**   * Redistributions of source code must retain the above copyright
-**     notice, this list of conditions and the following disclaimer.
-**   * Redistributions in binary form must reproduce the above copyright
-**     notice, this list of conditions and the following disclaimer in
-**     the documentation and/or other materials provided with the
-**     distribution.
-**   * Neither the name of The Qt Company Ltd nor the names of its
-**     contributors may be used to endorse or promote products derived
-**     from this software without specific prior written permission.
-**
-**
-** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2018 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 // Adapted from hellominimalcrossgfxtriangle with the frame rendering stripped out.
 // Include this file and implement Window::customInit, release and render.
@@ -59,10 +12,10 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QLoggingCategory>
+#include <QColorSpace>
 
 #include <QtGui/private/qshader_p.h>
 #include <QFile>
-#include <QtGui/private/qrhiprofiler_p.h>
 #include <QtGui/private/qrhinull_p.h>
 
 #ifndef QT_NO_OPENGL
@@ -78,7 +31,7 @@
 #include <QtGui/private/qrhid3d11_p.h>
 #endif
 
-#ifdef Q_OS_DARWIN
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
 #include <QtGui/private/qrhimetal_p.h>
 #endif
 
@@ -108,7 +61,7 @@ QString graphicsApiName()
     case Null:
         return QLatin1String("Null (no output)");
     case OpenGL:
-        return QLatin1String("OpenGL 2.x");
+        return QLatin1String("OpenGL");
     case Vulkan:
         return QLatin1String("Vulkan");
     case D3D11:
@@ -123,11 +76,12 @@ QString graphicsApiName()
 
 QRhi::Flags rhiFlags = QRhi::EnableDebugMarkers;
 int sampleCount = 1;
-QRhiSwapChain::Flags scFlags = 0;
-QRhi::BeginFrameFlags beginFrameFlags = 0;
-QRhi::EndFrameFlags endFrameFlags = 0;
+QRhiSwapChain::Flags scFlags;
+QRhi::BeginFrameFlags beginFrameFlags;
+QRhi::EndFrameFlags endFrameFlags;
 int framesUntilTdr = -1;
 bool transparentBackground = false;
+bool debugLayer = true;
 
 class Window : public QWindow
 {
@@ -148,6 +102,9 @@ protected:
 
     void exposeEvent(QExposeEvent *) override;
     bool event(QEvent *) override;
+#ifdef EXAMPLEFW_KEYPRESS_EVENTS
+    void keyPressEvent(QKeyEvent *e) override;
+#endif
 
     bool m_running = false;
     bool m_notExposed = false;
@@ -178,21 +135,16 @@ Window::Window()
     // Tell the platform plugin what we want.
     switch (graphicsApi) {
     case OpenGL:
-#if QT_CONFIG(opengl)
         setSurfaceType(OpenGLSurface);
-        setFormat(QRhiGles2InitParams::adjustedFormat());
-#endif
         break;
     case Vulkan:
         setSurfaceType(VulkanSurface);
         break;
     case D3D11:
-        setSurfaceType(OpenGLSurface); // not a typo
+        setSurfaceType(Direct3DSurface);
         break;
     case Metal:
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 12, 0))
         setSurfaceType(MetalSurface);
-#endif
         break;
     default:
         break;
@@ -283,7 +235,9 @@ void Window::init()
 #ifdef Q_OS_WIN
     if (graphicsApi == D3D11) {
         QRhiD3D11InitParams params;
-        params.enableDebugLayer = true;
+        if (debugLayer)
+            qDebug("Enabling D3D11 debug layer");
+        params.enableDebugLayer = debugLayer;
         if (framesUntilTdr > 0) {
             params.framesUntilKillingDeviceViaTdr = framesUntilTdr;
             params.repeatDeviceKill = true;
@@ -292,7 +246,7 @@ void Window::init()
     }
 #endif
 
-#ifdef Q_OS_DARWIN
+#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     if (graphicsApi == Metal) {
         QRhiMetalInitParams params;
         m_r = QRhi::create(QRhi::Metal, &params, rhiFlags);
@@ -305,7 +259,6 @@ void Window::init()
     // now onto the backend-independent init
 
     m_sc = m_r->newSwapChain();
-    // allow depth-stencil, although we do not actually enable depth test/write for the triangle
     m_ds = m_r->newRenderBuffer(QRhiRenderBuffer::DepthStencil,
                                 QSize(), // no need to set the size here, due to UsedWithSwapChainOnly
                                 sampleCount,
@@ -344,7 +297,7 @@ void Window::releaseResources()
 
 void Window::resizeSwapChain()
 {
-    m_hasSwapChain = m_sc->buildOrResize(); // also handles m_ds
+    m_hasSwapChain = m_sc->createOrResize(); // also handles m_ds
 
     m_frameCount = 0;
     m_timer.restart();
@@ -359,7 +312,7 @@ void Window::releaseSwapChain()
 {
     if (m_hasSwapChain) {
         m_hasSwapChain = false;
-        m_sc->release();
+        m_sc->destroy();
     }
 }
 
@@ -396,31 +349,7 @@ void Window::render()
 
     m_frameCount += 1;
     if (m_timer.elapsed() > 1000) {
-        if (rhiFlags.testFlag(QRhi::EnableProfiling)) {
-            const QRhiProfiler::CpuTime ff = m_r->profiler()->frameToFrameTimes(m_sc);
-            const QRhiProfiler::CpuTime be = m_r->profiler()->frameBuildTimes(m_sc);
-            const QRhiProfiler::GpuTime gp = m_r->profiler()->gpuFrameTimes(m_sc);
-            if (m_r->isFeatureSupported(QRhi::Timestamps)) {
-                qDebug("ca. %d fps. "
-                       "frame-to-frame: min %lld max %lld avg %f. "
-                       "frame build: min %lld max %lld avg %f. "
-                       "gpu frame time: min %f max %f avg %f",
-                       m_frameCount,
-                       ff.minTime, ff.maxTime, ff.avgTime,
-                       be.minTime, be.maxTime, be.avgTime,
-                       gp.minTime, gp.maxTime, gp.avgTime);
-            } else {
-                qDebug("ca. %d fps. "
-                       "frame-to-frame: min %lld max %lld avg %f. "
-                       "frame build: min %lld max %lld avg %f. ",
-                       m_frameCount,
-                       ff.minTime, ff.maxTime, ff.avgTime,
-                       be.minTime, be.maxTime, be.avgTime);
-            }
-        } else {
-            qDebug("ca. %d fps", m_frameCount);
-        }
-
+        qDebug("ca. %d fps", m_frameCount);
         m_timer.restart();
         m_frameCount = 0;
     }
@@ -437,7 +366,6 @@ void Window::render()
 
 int main(int argc, char **argv)
 {
-    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QGuiApplication app(argc, argv);
 
     QLoggingCategory::setFilterRules(QLatin1String("qt.rhi.*=true"));
@@ -445,7 +373,7 @@ int main(int argc, char **argv)
     // Defaults.
 #if defined(Q_OS_WIN)
     graphicsApi = D3D11;
-#elif defined(Q_OS_DARWIN)
+#elif defined(Q_OS_MACOS) || defined(Q_OS_IOS)
     graphicsApi = Metal;
 #elif QT_CONFIG(vulkan)
     graphicsApi = Vulkan;
@@ -458,7 +386,7 @@ int main(int argc, char **argv)
     cmdLineParser.addHelpOption();
     QCommandLineOption nullOption({ "n", "null" }, QLatin1String("Null"));
     cmdLineParser.addOption(nullOption);
-    QCommandLineOption glOption({ "g", "opengl" }, QLatin1String("OpenGL (2.x)"));
+    QCommandLineOption glOption({ "g", "opengl" }, QLatin1String("OpenGL"));
     cmdLineParser.addOption(glOption);
     QCommandLineOption vkOption({ "v", "vulkan" }, QLatin1String("Vulkan"));
     cmdLineParser.addOption(vkOption);
@@ -471,6 +399,8 @@ int main(int argc, char **argv)
     // Use this parameter for the latter.
     QCommandLineOption sdOption({ "s", "self-destruct" }, QLatin1String("Self-destruct after 5 seconds."));
     cmdLineParser.addOption(sdOption);
+    QCommandLineOption coreProfOption({ "c", "core" }, QLatin1String("Request a core profile context for OpenGL"));
+    cmdLineParser.addOption(coreProfOption);
     // Attempt testing device lost situations on D3D at least.
     QCommandLineOption tdrOption(QLatin1String("curse"), QLatin1String("Curse the graphics device. "
                                                         "(generate a device reset every <count> frames when on D3D11)"),
@@ -513,12 +443,20 @@ int main(int argc, char **argv)
     QSurfaceFormat fmt;
     fmt.setDepthBufferSize(24);
     fmt.setStencilBufferSize(8);
+    if (cmdLineParser.isSet(coreProfOption)) {
+#ifdef Q_OS_DARWIN
+        fmt.setVersion(4, 1);
+#else
+        fmt.setVersion(4, 3);
+#endif
+        fmt.setProfile(QSurfaceFormat::CoreProfile);
+    }
     if (sampleCount > 1)
         fmt.setSamples(sampleCount);
     if (scFlags.testFlag(QRhiSwapChain::NoVSync))
         fmt.setSwapInterval(0);
     if (scFlags.testFlag(QRhiSwapChain::sRGB))
-        fmt.setColorSpace(QSurfaceFormat::sRGBColorSpace);
+        fmt.setColorSpace(QColorSpace::SRgb);
     // Exception: The alpha size is not necessarily OpenGL specific.
     if (transparentBackground)
         fmt.setAlphaBufferSize(8);
@@ -528,20 +466,17 @@ int main(int argc, char **argv)
 #if QT_CONFIG(vulkan)
     QVulkanInstance inst;
     if (graphicsApi == Vulkan) {
-#ifndef Q_OS_ANDROID
-        inst.setLayers(QByteArrayList() << "VK_LAYER_LUNARG_standard_validation");
-#else
-        inst.setLayers(QByteArrayList()
-                       << "VK_LAYER_GOOGLE_threading"
-                       << "VK_LAYER_LUNARG_parameter_validation"
-                       << "VK_LAYER_LUNARG_object_tracker"
-                       << "VK_LAYER_LUNARG_core_validation"
-                       << "VK_LAYER_LUNARG_image"
-                       << "VK_LAYER_LUNARG_swapchain"
-                       << "VK_LAYER_GOOGLE_unique_objects");
-#endif
-        inst.setExtensions(QByteArrayList()
-                           << "VK_KHR_get_physical_device_properties2");
+        if (debugLayer) {
+            qDebug("Enabling Vulkan validation layer (if available)");
+            inst.setLayers({ "VK_LAYER_KHRONOS_validation" });
+        }
+        const QVersionNumber supportedVersion = inst.supportedApiVersion();
+        qDebug() << "Supported Vulkan API version:" << supportedVersion;
+        if (supportedVersion >= QVersionNumber(1, 1)) {
+            qDebug("Requesting Vulkan API 1.1 on the VkInstance");
+            inst.setApiVersion(QVersionNumber(1, 1));
+        }
+        inst.setExtensions(QRhiVulkanInitParams::preferredInstanceExtensions());
         if (!inst.create()) {
             qWarning("Failed to create Vulkan instance, switching to OpenGL");
             graphicsApi = OpenGL;
